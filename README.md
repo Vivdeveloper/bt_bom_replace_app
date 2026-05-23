@@ -1,6 +1,11 @@
 ### BT BOM Replace App
 
-BT BOM Replace App
+Desk tools for BOM item replacement and bulk item name/code word replace.
+
+**Pages**
+
+- **BT BOM Replace Tool** — `/app/bt-bom-replace-tool`
+- **Item Word Replace Tool** — `/app/item-word-replace-tool` (search items, multi-select, replace text in Item Name and Item Code)
 
 ### Installation
 
