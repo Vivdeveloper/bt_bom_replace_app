@@ -8,6 +8,8 @@ frappe.pages["bt-bom-replace-tool"].on_page_load = function (wrapper) {
 			"bt_bom_replace_app.bt_bom_replace_app.page.bt_bom_replace_tool.bt_bom_replace_tool.get_replace_preview",
 		replace:
 			"bt_bom_replace_app.bt_bom_replace_app.page.bt_bom_replace_tool.bt_bom_replace_tool.replace_item_in_all_boms",
+		item_details:
+			"bt_bom_replace_app.bt_bom_replace_app.page.bt_bom_replace_tool.bt_bom_replace_tool.get_item_display_details",
 	};
 
 	const page = frappe.ui.make_app_page({
@@ -39,7 +41,13 @@ frappe.pages["bt-bom-replace-tool"].on_page_load = function (wrapper) {
 					<div class="btbr-item-image-wrap hide">
 						<img class="btbr-item-image" alt="" />
 					</div>
-					<div class="btbr-panel-field btbr-search-field"></div>
+					<div class="btbr-search-item-fields">
+						<div class="btbr-panel-field btbr-search-field"></div>
+						<div class="btbr-item-meta-fields">
+							<div class="btbr-panel-field btbr-search-drawing-field"></div>
+							<div class="btbr-panel-field btbr-search-itemname-field"></div>
+						</div>
+					</div>
 				</div>
 			</div>
 			<div class="btbr-panel btbr-panel-right">
@@ -48,7 +56,14 @@ frappe.pages["bt-bom-replace-tool"].on_page_load = function (wrapper) {
 					<button type="button" class="btn btn-primary btn-sm btn-btbr-replace">${__("Replace Selected BOMs")}</button>
 				</div>
 				<p class="text-muted small btbr-replace-help"></p>
-				<div class="btbr-panel-field btbr-replace-field"></div>
+				<div class="btbr-replace-item-fields">
+					<div class="btbr-panel-field btbr-replace-field"></div>
+					<div class="btbr-item-meta-fields btbr-replace-meta-fields">
+						<div class="btbr-panel-field btbr-replace-drawing-field"></div>
+						<div class="btbr-panel-field btbr-replace-itemname-field"></div>
+					</div>
+					<div class="btbr-replace-bom-status"></div>
+				</div>
 			</div>
 		</div>
 	`).appendTo($root);
@@ -95,6 +110,28 @@ frappe.pages["bt-bom-replace-tool"].on_page_load = function (wrapper) {
 		render_input: true,
 	});
 
+	const drawing_no_field = frappe.ui.form.make_control({
+		parent: $top_panels.find(".btbr-search-drawing-field")[0],
+		df: {
+			fieldtype: "Data",
+			fieldname: "item_drawing_no",
+			label: __("Drawing No"),
+			read_only: 1,
+		},
+		render_input: true,
+	});
+
+	const item_name_field = frappe.ui.form.make_control({
+		parent: $top_panels.find(".btbr-search-itemname-field")[0],
+		df: {
+			fieldtype: "Data",
+			fieldname: "item_name",
+			label: __("Item Name"),
+			read_only: 1,
+		},
+		render_input: true,
+	});
+
 	const replace_item_field = frappe.ui.form.make_control({
 		parent: $top_panels.find(".btbr-replace-field")[0],
 		df: {
@@ -107,6 +144,30 @@ frappe.pages["bt-bom-replace-tool"].on_page_load = function (wrapper) {
 		},
 		render_input: true,
 	});
+
+	const replace_drawing_no_field = frappe.ui.form.make_control({
+		parent: $top_panels.find(".btbr-replace-drawing-field")[0],
+		df: {
+			fieldtype: "Data",
+			fieldname: "replace_item_drawing_no",
+			label: __("Drawing No"),
+			read_only: 1,
+		},
+		render_input: true,
+	});
+
+	const replace_item_name_field = frappe.ui.form.make_control({
+		parent: $top_panels.find(".btbr-replace-itemname-field")[0],
+		df: {
+			fieldtype: "Data",
+			fieldname: "replace_item_name",
+			label: __("Item Name"),
+			read_only: 1,
+		},
+		render_input: true,
+	});
+
+	const $replace_bom_status = $top_panels.find(".btbr-replace-bom-status");
 
 	const BOM_STATUS_COLORS = {
 		Available: "green",
@@ -147,9 +208,22 @@ frappe.pages["bt-bom-replace-tool"].on_page_load = function (wrapper) {
 		return "";
 	}
 
+	function set_replace_bom_status(html) {
+		$replace_bom_status.html(html || "");
+	}
+
+	function set_replace_item_details(drawing_no, item_name) {
+		replace_drawing_no_field.set_value(drawing_no || "");
+		replace_item_name_field.set_value(item_name || "");
+	}
+
+	function clear_replace_item_details() {
+		set_replace_item_details("", "");
+	}
+
 	async function update_replace_item_bom_status(item_code) {
 		if (!item_code) {
-			replace_item_field.set_description("");
+			set_replace_bom_status("");
 			return;
 		}
 
@@ -159,7 +233,7 @@ frappe.pages["bt-bom-replace-tool"].on_page_load = function (wrapper) {
 		if (default_bom) {
 			const exists = await frappe.db.exists("BOM", default_bom);
 			if (exists) {
-				replace_item_field.set_description(get_bom_status_desc("Available", default_bom));
+				set_replace_bom_status(get_bom_status_desc("Available", default_bom));
 				return;
 			}
 		}
@@ -174,20 +248,38 @@ frappe.pages["bt-bom-replace-tool"].on_page_load = function (wrapper) {
 				limit: 1,
 				order_by: "modified desc",
 			});
-			replace_item_field.set_description(
-				get_bom_status_desc("No Default BOM", boms[0]?.name || "")
-			);
+			set_replace_bom_status(get_bom_status_desc("No Default BOM", boms[0]?.name || ""));
 			return;
 		}
 
-		replace_item_field.set_description(get_bom_status_desc("Not Available"));
+		set_replace_bom_status(get_bom_status_desc("Not Available"));
+	}
+
+	async function update_replace_item_panel(item_code) {
+		if (!item_code) {
+			clear_replace_item_details();
+			set_replace_bom_status("");
+			return;
+		}
+		try {
+			const r = await frappe.call({
+				method: API.item_details,
+				args: { item_code },
+			});
+			if (r.message) {
+				set_replace_item_details(r.message.item_drawing_no, r.message.item_name);
+			}
+		} catch (e) {
+			clear_replace_item_details();
+		}
+		await update_replace_item_bom_status(item_code);
 	}
 
 	replace_item_field.$input?.on("awesomplete-selectcomplete", () => {
-		update_replace_item_bom_status(replace_item_field.get_value());
+		update_replace_item_panel(replace_item_field.get_value());
 	});
 	replace_item_field.$input?.on("change", () => {
-		update_replace_item_bom_status(replace_item_field.get_value());
+		update_replace_item_panel(replace_item_field.get_value());
 	});
 
 	setTimeout(() => align_input_fields(item_field, replace_item_field), 0);
@@ -219,7 +311,8 @@ frappe.pages["bt-bom-replace-tool"].on_page_load = function (wrapper) {
 		replace_item_field.df.get_query = () => ({});
 		if (clear_replace_value !== false) {
 			replace_item_field.set_value("");
-			replace_item_field.set_description("");
+			clear_replace_item_details();
+			set_replace_bom_status("");
 		}
 		replace_item_field.refresh();
 	}
@@ -343,6 +436,7 @@ frappe.pages["bt-bom-replace-tool"].on_page_load = function (wrapper) {
 	function keep_searched_item_after_replace(searched_item) {
 		const meta = last_search_data || {};
 		item_field.set_value(searched_item);
+		set_search_item_details(meta.item_drawing_no, meta.item_name);
 		set_replace_parent_item_group_filter(
 			meta.custom_parent_item_group || current_parent_item_group,
 			meta.item_group || current_replace_item_group,
@@ -361,8 +455,18 @@ frappe.pages["bt-bom-replace-tool"].on_page_load = function (wrapper) {
 		$item_image_wrap.removeClass("hide");
 	}
 
+	function set_search_item_details(drawing_no, item_name) {
+		drawing_no_field.set_value(drawing_no || "");
+		item_name_field.set_value(item_name || "");
+	}
+
+	function clear_search_item_details() {
+		set_search_item_details("", "");
+	}
+
 	function render_results(data) {
 		set_item_image(data.item_image);
+		set_search_item_details(data.item_drawing_no, data.item_name);
 		$results.empty();
 		$summary.empty();
 		last_search_data = data;
@@ -527,8 +631,10 @@ frappe.pages["bt-bom-replace-tool"].on_page_load = function (wrapper) {
 
 	function clear_search() {
 		item_field.set_value("");
+		clear_search_item_details();
 		replace_item_field.set_value("");
-		replace_item_field.set_description("");
+		clear_replace_item_details();
+		set_replace_bom_status("");
 		set_replace_parent_item_group_filter("");
 		set_item_image("");
 		$results.empty().removeClass("btbr-results-table");
@@ -723,9 +829,38 @@ frappe.pages["bt-bom-replace-tool"].on_page_load = function (wrapper) {
 	max-height: 100%;
 	object-fit: contain;
 }
+.bt-bom-replace-page .btbr-search-item-fields {
+	flex: 1 1 auto;
+	min-width: 0;
+	display: flex;
+	flex-direction: column;
+	gap: 0;
+}
+.bt-bom-replace-page .btbr-replace-item-fields {
+	display: flex;
+	flex-direction: column;
+}
+.bt-bom-replace-page .btbr-item-meta-fields {
+	display: flex;
+	flex-direction: column;
+	gap: 0;
+	margin-top: 10px;
+}
+.bt-bom-replace-page .btbr-replace-bom-status {
+	margin-top: 8px;
+	font-size: var(--text-sm, 12px);
+	line-height: 1.45;
+}
+.bt-bom-replace-page .btbr-replace-bom-status:empty {
+	display: none;
+}
 .bt-bom-replace-page .btbr-search-item-row .btbr-panel-field {
 	flex: 1 1 auto;
 	min-width: 0;
+}
+.bt-bom-replace-page .btbr-item-meta-fields .frappe-control input.form-control[readonly] {
+	background-color: var(--control-bg, #f7f7f7) !important;
+	cursor: default;
 }
 .bt-bom-replace-page .btbr-panel-field {
 	flex: 1 1 auto;

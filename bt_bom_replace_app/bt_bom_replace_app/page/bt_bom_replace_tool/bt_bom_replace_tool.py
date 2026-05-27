@@ -100,6 +100,8 @@ def find_bom_links(item_code: str, search_type: str = "all"):
 
 	return {
 		"item_code": item_code,
+		"item_name": _get_item_name(item_code),
+		"item_drawing_no": _get_item_drawing(item_code),
 		"custom_parent_item_group": _get_custom_parent_item_group(item_code),
 		"item_group": _get_item_group(item_code),
 		"material_key": material_key,
@@ -262,11 +264,25 @@ def _line_drawing(line: dict, fallback: str = "") -> str:
 	return drawing or fallback
 
 
+def _get_item_name(item_code: str) -> str:
+	return cstr(frappe.db.get_value("Item", item_code, "item_name") or "").strip()
+
+
 def _get_item_drawing(item_code: str) -> str:
+	"""Drawing number from Item (site may use custom_drawing_number, custom_drawing_no, etc.)."""
 	meta = frappe.get_meta("Item")
-	if not meta.has_field("custom_drawing_number"):
-		return ""
-	return cstr(frappe.db.get_value("Item", item_code, "custom_drawing_number") or "").strip()
+	fieldnames = (
+		"custom_drawing_number",
+		"custom_full_drawing_number_",
+		"custom_drawing_no",
+		"drawing_no",
+	)
+	for fieldname in fieldnames:
+		if meta.has_field(fieldname):
+			val = cstr(frappe.db.get_value("Item", item_code, fieldname) or "").strip()
+			if val:
+				return val
+	return ""
 
 
 def _get_item_image(item_code: str) -> str:
@@ -551,6 +567,20 @@ def _get_parent_boms(bom_name: str) -> list[str]:
 		)
 		.run(pluck=True)
 	)
+
+
+@frappe.whitelist()
+def get_item_display_details(item_code: str) -> dict:
+	"""Item Name and Drawing No for desk page read-only fields."""
+	item_code = (item_code or "").strip()
+	if not item_code:
+		return {"item_name": "", "item_drawing_no": ""}
+	if not frappe.db.exists("Item", item_code):
+		frappe.throw(_("Item {0} not found").format(item_code))
+	return {
+		"item_name": _get_item_name(item_code),
+		"item_drawing_no": _get_item_drawing(item_code),
+	}
 
 
 @frappe.whitelist()
