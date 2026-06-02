@@ -419,7 +419,7 @@ def _collect_custom_table_rows(
 			linked_bom=linked,
 			source=parentfield,
 			child_row=ln.name,
-			custom_drawing_number=_line_drawing(ln, item_drawing) or _bom_drawing(bom),
+			custom_drawing_number=_bom_drawing(bom),
 		)
 	return out
 
@@ -469,7 +469,7 @@ def _collect_bom_item_rows(
 			linked_bom=linked,
 			source="bom_item",
 			child_row=ln.name,
-			custom_drawing_number=_line_drawing(ln, item_drawing) or _bom_drawing(bom),
+			custom_drawing_number=_bom_drawing(bom),
 		)
 	return out
 
