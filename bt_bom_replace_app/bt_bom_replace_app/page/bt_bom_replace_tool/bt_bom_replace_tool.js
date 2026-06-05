@@ -8,6 +8,10 @@ frappe.pages["bt-bom-replace-tool"].on_page_load = function (wrapper) {
 			"bt_bom_replace_app.bt_bom_replace_app.page.bt_bom_replace_tool.bt_bom_replace_tool.get_replace_preview",
 		replace:
 			"bt_bom_replace_app.bt_bom_replace_app.page.bt_bom_replace_tool.bt_bom_replace_tool.replace_item_in_all_boms",
+		remove_preview:
+			"bt_bom_replace_app.bt_bom_replace_app.page.bt_bom_replace_tool.bt_bom_replace_tool.get_remove_preview",
+		remove:
+			"bt_bom_replace_app.bt_bom_replace_app.page.bt_bom_replace_tool.bt_bom_replace_tool.remove_item_from_selected_boms",
 		item_details:
 			"bt_bom_replace_app.bt_bom_replace_app.page.bt_bom_replace_tool.bt_bom_replace_tool.get_item_display_details",
 	};
@@ -54,6 +58,7 @@ frappe.pages["bt-bom-replace-tool"].on_page_load = function (wrapper) {
 				<div class="btbr-panel-title">${__("Replace")}</div>
 				<div class="btbr-panel-actions">
 					<button type="button" class="btn btn-primary btn-sm btn-btbr-replace">${__("Replace Selected BOMs")}</button>
+					<button type="button" class="btn btn-danger btn-sm btn-btbr-remove">${__("Remove Selected BOMs")}</button>
 				</div>
 				<p class="text-muted small btbr-replace-help"></p>
 				<div class="btbr-replace-item-fields">
@@ -83,6 +88,7 @@ frappe.pages["bt-bom-replace-tool"].on_page_load = function (wrapper) {
 	const $summary = $list_section.find(".btbr-summary");
 	const $results = $list_section.find(".btbr-results");
 	const $replace_btn = $top_panels.find(".btn-btbr-replace");
+	const $remove_btn = $top_panels.find(".btn-btbr-remove");
 
 	$search_help.text(
 		__(
@@ -94,7 +100,7 @@ frappe.pages["bt-bom-replace-tool"].on_page_load = function (wrapper) {
 	const $item_image = $top_panels.find(".btbr-item-image");
 	$replace_help.text(
 		__(
-			"Select an item on the left, then choose a replacement item. Select BOM rows in the table below (In BOM level only), then click Replace Selected BOMs."
+			"Select an item on the left, then choose a replacement item to replace, or use Remove to delete the item from selected BOMs. Select In BOM rows in the table below, then click Replace Selected BOMs or Remove Selected BOMs."
 		)
 	);
 
@@ -303,6 +309,7 @@ frappe.pages["bt-bom-replace-tool"].on_page_load = function (wrapper) {
 
 	function set_replace_enabled(enabled) {
 		$replace_btn.prop("disabled", !enabled);
+		$remove_btn.prop("disabled", !enabled);
 	}
 
 	function set_replace_parent_item_group_filter(parent_item_group, item_group, clear_replace_value) {
@@ -321,7 +328,7 @@ frappe.pages["bt-bom-replace-tool"].on_page_load = function (wrapper) {
 		if (!item_code) {
 			$replace_help.html(
 				__(
-					"Select an item on the left, then choose a replacement item. Select BOM rows in the table below (In BOM level only), then click Replace Selected BOMs."
+					"Select an item on the left, then choose a replacement item to replace, or use Remove to delete the item from selected BOMs. Select In BOM rows in the table below, then click Replace Selected BOMs or Remove Selected BOMs."
 				)
 			);
 			return;
@@ -414,6 +421,82 @@ frappe.pages["bt-bom-replace-tool"].on_page_load = function (wrapper) {
 		}
 
 		return `<div class="bt-bom-replace-complete-msg">${parts.join("")}</div>`;
+	}
+
+	function format_remove_result_message(out) {
+		if (!out) {
+			return `<div>${__("Remove operation finished.")}</div>`;
+		}
+		const current = frappe.utils.escape_html(out.current_item || "");
+		const updated_boms = out.updated_boms || [];
+		const skipped = out.skipped || [];
+		const failed = out.failed || [];
+		const parts = [];
+
+		parts.push(`<div>${__("Item removed from BOM(s)")}<br>${current}</div>`);
+
+		if (updated_boms.length) {
+			const bom_lines = updated_boms
+				.slice(0, 25)
+				.map((bom) => `<li>${bom_link(bom)}</li>`)
+				.join("");
+			let list_html = `<div style="margin-top:12px">${__("Updated")} ${updated_boms.length} ${__(
+				"BOM(s)"
+			)}</div><ul style="margin:8px 0 0 18px">${bom_lines}</ul>`;
+			if (updated_boms.length > 25) {
+				list_html += `<div class="text-muted small">${__("…and")} ${
+					updated_boms.length - 25
+				} ${__("more BOM(s)")}</div>`;
+			}
+			parts.push(list_html);
+		} else {
+			parts.push(`<div style="margin-top:12px">${__("No BOMs were updated.")}</div>`);
+		}
+
+		if (skipped.length) {
+			const lines = skipped
+				.slice(0, 10)
+				.map(
+					(s) =>
+						`<li>${frappe.utils.escape_html(s.bom)}: ${frappe.utils.escape_html(
+							s.reason
+						)}</li>`
+				)
+				.join("");
+			parts.push(
+				`<div style="margin-top:12px">${__("Skipped")} (${skipped.length})</div><ul class="text-muted" style="margin:8px 0 0 18px">${lines}</ul>`
+			);
+		}
+
+		if (failed.length) {
+			const lines = failed
+				.slice(0, 10)
+				.map(
+					(f) =>
+						`<li>${frappe.utils.escape_html(f.bom)}: ${frappe.utils.escape_html(
+							f.reason
+						)}</li>`
+				)
+				.join("");
+			parts.push(
+				`<div style="margin-top:12px">${__("Failed")} (${failed.length})</div><ul class="text-danger" style="margin:8px 0 0 18px">${lines}</ul>`
+			);
+		}
+
+		return `<div class="bt-bom-replace-complete-msg">${parts.join("")}</div>`;
+	}
+
+	function show_remove_complete_dialog(out) {
+		const html = format_remove_result_message(out);
+		const dialog = new frappe.ui.Dialog({
+			title: __("Remove complete"),
+			fields: [{ fieldtype: "HTML", fieldname: "result", options: html }],
+			primary_action_label: __("OK"),
+			primary_action() {
+				dialog.hide();
+			},
+		});
+		dialog.show();
 	}
 
 	function show_replace_complete_dialog(out) {
@@ -582,7 +665,7 @@ frappe.pages["bt-bom-replace-tool"].on_page_load = function (wrapper) {
 				if (row.level !== "usage") {
 					inp.disabled = true;
 					inp.checked = false;
-					inp.title = __("Only 'In BOM' rows can be selected for replace");
+					inp.title = __("Only 'In BOM' rows can be selected for replace or remove");
 					const cell = inp.closest(".dt-cell");
 					if (cell) {
 						cell.classList.add("bt-bom-row-not-selectable");
@@ -718,9 +801,71 @@ frappe.pages["bt-bom-replace-tool"].on_page_load = function (wrapper) {
 		});
 	}
 
+	function run_remove() {
+		const current_item = item_field.get_value();
+
+		if (!current_item) {
+			frappe.show_alert({ message: __("Search an item first"), indicator: "orange" });
+			return;
+		}
+
+		const bom_list = get_selected_boms();
+		if (!bom_list.length) {
+			frappe.show_alert({
+				message: __("Select at least one BOM row in the table"),
+				indicator: "orange",
+			});
+			return;
+		}
+
+		const preview_args = { current_item, bom_list: JSON.stringify(bom_list) };
+
+		frappe.call({
+			method: API.remove_preview,
+			args: preview_args,
+			freeze: true,
+			freeze_message: __("Checking BOMs..."),
+			callback(r) {
+				if (r.exc || !r.message) return;
+				const p = r.message;
+				if (!p.bom_count) {
+					frappe.msgprint({
+						title: __("Nothing to remove"),
+						message: __("No material lines found for item {0}", [current_item]),
+						indicator: "orange",
+					});
+					return;
+				}
+
+				frappe.confirm(
+					__(
+						"Remove {0} from {1} selected BOM(s) ({2} material line(s))? This cannot be undone easily.",
+						[p.current_item, p.bom_count, p.line_count]
+					),
+					() => {
+						frappe.call({
+							method: API.remove,
+							args: preview_args,
+							freeze: true,
+							freeze_message: __("Removing item from BOMs..."),
+							callback(res) {
+								if (res.exc || !res.message) return;
+								const out = res.message;
+								show_remove_complete_dialog(out);
+								keep_searched_item_after_replace(current_item);
+								run_search();
+							},
+						});
+					}
+				);
+			},
+		});
+	}
+
 	$top_panels.find(".btn-btbr-find").on("click", () => run_search());
 	$top_panels.find(".btn-btbr-clear").on("click", () => clear_search());
 	$top_panels.find(".btn-btbr-replace").on("click", () => run_replace());
+	$top_panels.find(".btn-btbr-remove").on("click", () => run_remove());
 
 	function align_input_fields(...controls) {
 		const $labels = controls

@@ -1,0 +1,22 @@
+{
+	"folders": [
+		{
+			"path": "bt_bom_replace_app/bt_bom_replace_app/page/bt_bom_replace_tool",
+			"name": "BT BOM Replace Tool"
+		},
+		{
+			"path": ".",
+			"name": "bt_bom_replace_app (repo)"
+		}
+	],
+	"settings": {
+		"python.defaultInterpreterPath": "/home/admin1/bartakke/env/bin/python",
+		"files.exclude": {
+			"**/__pycache__": true,
+			"**/*.pyc": true
+		},
+		"search.exclude": {
+			"bt_bom_replace_app/bt_bom_replace_app/page/item_word_replace_tool": true
+		}
+	}
+}

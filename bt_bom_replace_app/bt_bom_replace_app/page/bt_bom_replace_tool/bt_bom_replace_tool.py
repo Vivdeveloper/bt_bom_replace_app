@@ -665,6 +665,71 @@ def replace_item_in_all_boms(current_item: str, new_item: str, bom_list=None) ->
 	}
 
 
+@frappe.whitelist()
+def get_remove_preview(current_item: str, bom_list=None) -> dict:
+	"""Count BOMs and material lines that will be removed."""
+	current_item = _validate_remove_item(current_item)
+	material_key = _get_material_key(current_item) or ""
+	selected_boms = _parse_bom_list(bom_list)
+	all_boms, _line_count = _boms_with_material_usage(current_item, material_key)
+	bom_names = _filter_boms_for_replace(all_boms, selected_boms)
+	line_count = _line_count_for_boms(current_item, bom_names, material_key)
+	return {
+		"current_item": current_item,
+		"custom_parent_item_group": _get_custom_parent_item_group(current_item),
+		"item_group": _get_item_group(current_item),
+		"bom_count": len(bom_names),
+		"line_count": line_count,
+		"selected_only": bool(selected_boms),
+	}
+
+
+@frappe.whitelist()
+def remove_item_from_selected_boms(current_item: str, bom_list=None) -> dict:
+	"""Remove `current_item` from BOM material lines (selected BOMs only)."""
+	current_item = _validate_remove_item(current_item)
+	frappe.has_permission("BOM", ptype="write", throw=True)
+
+	material_key = _get_material_key(current_item) or ""
+	selected_boms = _parse_bom_list(bom_list)
+	all_boms, _line_count = _boms_with_material_usage(current_item, material_key)
+	bom_names = _filter_boms_for_replace(all_boms, selected_boms)
+	if not bom_names:
+		frappe.throw(_("No BOM material lines found for item {0}").format(current_item))
+
+	updated: list[str] = []
+	skipped: list[dict] = []
+	failed: list[dict] = []
+
+	for bom_name in sorted(bom_names):
+		try:
+			result = _remove_item_from_single_bom(bom_name, current_item)
+			if result == "updated":
+				updated.append(bom_name)
+			elif result:
+				skipped.append({"bom": bom_name, "reason": result})
+		except Exception as exc:
+			frappe.log_error(
+				message=frappe.get_traceback(),
+				title=_("BOM Remove failed for {0}").format(bom_name),
+			)
+			failed.append({"bom": bom_name, "reason": str(exc)})
+
+	if not updated and not skipped:
+		frappe.throw(_("No BOMs were updated."))
+
+	return {
+		"current_item": current_item,
+		"updated_boms": updated,
+		"skipped": skipped,
+		"failed": failed,
+		"updated_count": len(updated),
+		"skipped_count": len(skipped),
+		"failed_count": len(failed),
+		"selected_only": bool(selected_boms),
+	}
+
+
 def _parse_bom_list(bom_list) -> list[str] | None:
 	"""Optional list of BOM names from the desk page (selected rows)."""
 	if bom_list is None or bom_list == "":
@@ -719,6 +784,15 @@ def _parentfields_for_item_on_boms(
 			for parentfield in _parentfields_for_item_on_bom(bom_name, item_code, material_key):
 				found.add(parentfield)
 	return tuple(found)
+
+
+def _validate_remove_item(current_item: str) -> str:
+	current_item = (current_item or "").strip()
+	if not current_item:
+		frappe.throw(_("Item is required"))
+	if not frappe.db.exists("Item", current_item):
+		frappe.throw(_("Item {0} not found").format(current_item))
+	return current_item
 
 
 def _validate_replace_items(current_item: str, new_item: str) -> tuple[str, str, str]:
@@ -1168,6 +1242,111 @@ def _finalize_bom_for_save(bom) -> None:
 			row.uom = frappe.db.get_value("Item", row.item_code, "stock_uom")
 		if row.uom and not row.stock_uom:
 			row.stock_uom = row.uom
+
+
+def _remove_item_from_single_bom(bom_name: str, current_item: str) -> str | None:
+	bom = frappe.get_doc("BOM", bom_name)
+	frappe.has_permission("BOM", doc=bom, ptype="write", throw=True)
+
+	if bom.item == current_item:
+		return _("Skipped: item is the finished good on this BOM")
+
+	changed = _remove_from_custom_tables_db(bom_name, current_item)
+	if not changed:
+		changed = _remove_from_bom_items_db(bom_name, current_item)
+
+	if not changed:
+		return _("Skipped: item not found on this BOM")
+
+	bom = frappe.get_doc("BOM", bom_name)
+	_sync_bom_items_if_available(bom)
+	_finalize_bom_for_save(bom)
+	_save_bom_after_replace(bom)
+	return "updated"
+
+
+def _remove_from_custom_tables_db(bom_name: str, item_code: str) -> bool:
+	"""Delete all custom BOM child rows for `item_code` on this BOM."""
+	changed = False
+	for parentfield in _parentfields_for_item_on_bom_all(bom_name, item_code):
+		child_dt = _PARENTFIELD_TO_CHILD_DT.get(parentfield)
+		if not child_dt or not frappe.db.table_exists(child_dt):
+			continue
+		deleted_any = False
+		for name in frappe.get_all(
+			child_dt,
+			filters={
+				"parent": bom_name,
+				"parenttype": "BOM",
+				"parentfield": parentfield,
+				"item_code": item_code,
+			},
+			pluck="name",
+		):
+			frappe.delete_doc(child_dt, name, force=1)
+			deleted_any = True
+			changed = True
+		if deleted_any:
+			_reindex_bom_child_table(bom_name, parentfield)
+	return changed
+
+
+def _remove_from_bom_items_db(bom_name: str, item_code: str) -> bool:
+	"""Delete synced BOM Item rows when the item exists only on the standard table."""
+	changed = False
+	for name in frappe.get_all(
+		"BOM Item",
+		filters={
+			"parent": bom_name,
+			"parenttype": "BOM",
+			"item_code": item_code,
+			"docstatus": ("!=", 2),
+		},
+		pluck="name",
+	):
+		frappe.delete_doc("BOM Item", name, force=1)
+		changed = True
+	if changed:
+		_reindex_bom_items_table(bom_name)
+	return changed
+
+
+def _reindex_bom_child_table(bom_name: str, parentfield: str) -> None:
+	"""Renumber idx on a custom BOM child table after row deletion."""
+	child_dt = _PARENTFIELD_TO_CHILD_DT.get(parentfield)
+	if not child_dt or not frappe.db.table_exists(child_dt):
+		return
+
+	rows = frappe.get_all(
+		child_dt,
+		filters={
+			"parent": bom_name,
+			"parenttype": "BOM",
+			"parentfield": parentfield,
+		},
+		fields=["name", "idx"],
+		order_by="idx asc, name asc",
+	)
+	for new_idx, row in enumerate(rows, start=1):
+		if cint(row.idx) != new_idx:
+			frappe.db.set_value(child_dt, row.name, "idx", new_idx, update_modified=False)
+
+
+def _reindex_bom_items_table(bom_name: str) -> None:
+	"""Renumber idx on BOM Item rows after row deletion."""
+	rows = frappe.get_all(
+		"BOM Item",
+		filters={
+			"parent": bom_name,
+			"parenttype": "BOM",
+			"docstatus": ("!=", 2),
+		},
+		fields=["name", "idx"],
+		order_by="idx asc, name asc",
+	)
+	for new_idx, row in enumerate(rows, start=1):
+		if cint(row.idx) != new_idx:
+			frappe.db.set_value("BOM Item", row.name, "idx", new_idx, update_modified=False)
 
 
 def _save_bom_after_replace(bom) -> None:
