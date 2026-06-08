@@ -37,6 +37,7 @@ frappe.pages["item-word-replace-tool"].on_page_load = function (wrapper) {
 			<div class="iwr-panel iwr-panel-right">
 				<div class="iwr-panel-actions">
 					<button type="button" class="btn btn-primary btn-sm btn-iwr-replace">${__("Replace")}</button>
+					<button type="button" class="btn btn-default btn-sm btn-iwr-remove">${__("Remove")}</button>
 				</div>
 				<div class="iwr-panel-field iwr-replace-with-field"></div>
 			</div>
@@ -252,9 +253,8 @@ frappe.pages["item-word-replace-tool"].on_page_load = function (wrapper) {
 		});
 	}
 
-	function run_replace() {
+	function run_text_update({ replace_text, nothing_title, confirm_message, apply_message }) {
 		const search_text = (search_field.get_value() || "").trim();
-		const replace_text = replace_with_field.get_value() ?? "";
 		const item_codes = get_selected_item_codes();
 
 		if (!search_text) {
@@ -288,7 +288,7 @@ frappe.pages["item-word-replace-tool"].on_page_load = function (wrapper) {
 				const p = r.message;
 				if (!p.row_count) {
 					frappe.msgprint({
-						title: __("Nothing to replace"),
+						title: nothing_title,
 						message: __(
 							"Selected items do not contain the search text in Item Name or Item Code."
 						),
@@ -297,34 +297,58 @@ frappe.pages["item-word-replace-tool"].on_page_load = function (wrapper) {
 					return;
 				}
 
-				frappe.confirm(
-					__(
-						"Replace <b>{0}</b> with <b>{1}</b> in Item Name and Item Code for <b>{2}</b> item(s)?",
-						[
-							frappe.utils.escape_html(p.search_text),
-							frappe.utils.escape_html(p.replace_text || ""),
-							p.row_count,
-						]
-					),
-					() => {
-						frappe.call({
-							method: API.replace,
-							args,
-							freeze: true,
-							freeze_message: __("Replacing..."),
-							callback(res) {
-								if (res.exc || !res.message) return;
-								const out = res.message;
-								frappe.show_alert({
-									message: __("Updated {0} item(s)", [out.updated_count]),
-									indicator: out.updated_count ? "green" : "orange",
-								});
+				frappe.confirm(confirm_message(p), () => {
+					frappe.call({
+						method: API.replace,
+						args,
+						freeze: true,
+						freeze_message: apply_message,
+						callback(res) {
+							if (res.exc || !res.message) return;
+							const out = res.message;
+							frappe.show_alert({
+								message: __("Updated {0} item(s)", [out.updated_count]),
+								indicator: out.updated_count ? "green" : "orange",
+							});
+							if (last_search_data?.show_all) {
+								run_search(true);
+							} else {
 								run_search(false);
-							},
-						});
-					}
-				);
+							}
+						},
+					});
+				});
 			},
+		});
+	}
+
+	function run_replace() {
+		run_text_update({
+			replace_text: replace_with_field.get_value() ?? "",
+			nothing_title: __("Nothing to replace"),
+			confirm_message: (p) =>
+				__(
+					"Replace <b>{0}</b> with <b>{1}</b> in Item Name and Item Code for <b>{2}</b> item(s)?",
+					[
+						frappe.utils.escape_html(p.search_text),
+						frappe.utils.escape_html(p.replace_text || ""),
+						p.row_count,
+					]
+				),
+			apply_message: __("Replacing..."),
+		});
+	}
+
+	function run_remove() {
+		run_text_update({
+			replace_text: "",
+			nothing_title: __("Nothing to remove"),
+			confirm_message: (p) =>
+				__(
+					"Remove <b>{0}</b> from Item Name and Item Code for <b>{1}</b> item(s)?",
+					[frappe.utils.escape_html(p.search_text), p.row_count]
+				),
+			apply_message: __("Removing..."),
 		});
 	}
 
@@ -336,6 +360,7 @@ frappe.pages["item-word-replace-tool"].on_page_load = function (wrapper) {
 
 	$inputs_section.find(".btn-iwr-search").on("click", () => run_search(false));
 	$inputs_section.find(".btn-iwr-replace").on("click", () => run_replace());
+	$inputs_section.find(".btn-iwr-remove").on("click", () => run_remove());
 	$inputs_section.find(".btn-iwr-show-all").on("click", () => run_search(true));
 
 	function align_input_fields(...controls) {
