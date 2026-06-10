@@ -93,6 +93,7 @@ frappe.pages["item-word-replace-tool"].on_page_load = function (wrapper) {
 
 	let result_datatable = null;
 	let last_search_data = null;
+	let last_table_rows = null;
 
 	function item_link(name) {
 		if (!name) return "";
@@ -108,6 +109,7 @@ frappe.pages["item-word-replace-tool"].on_page_load = function (wrapper) {
 		if (!data?.rows?.length) {
 			$summary.text(__("No items found."));
 			result_datatable = null;
+			last_table_rows = null;
 			return;
 		}
 
@@ -147,7 +149,7 @@ frappe.pages["item-word-replace-tool"].on_page_load = function (wrapper) {
 
 		$results.addClass("iwr-results-table");
 
-		const table_rows = data.rows.map((r) => ({
+		last_table_rows = data.rows.map((r) => ({
 			full_drawing_number: r.full_drawing_number || "",
 			item_code: r.item_code || "",
 			item_name: r.item_name || "",
@@ -156,7 +158,7 @@ frappe.pages["item-word-replace-tool"].on_page_load = function (wrapper) {
 
 		result_datatable = new frappe.DataTable($results[0], {
 			columns,
-			data: table_rows,
+			data: last_table_rows,
 			layout: "fixed",
 			cellHeight: 32,
 			serialNoColumn: true,
@@ -212,18 +214,41 @@ frappe.pages["item-word-replace-tool"].on_page_load = function (wrapper) {
 	}
 
 	function get_selected_item_codes() {
-		if (!result_datatable?.rowmanager || !last_search_data?.rows) {
+		if (!result_datatable?.rowmanager || !last_table_rows?.length) {
 			return [];
 		}
 		const indexes = result_datatable.rowmanager.getCheckedRows();
 		const codes = [];
 		indexes.forEach((idx) => {
-			const row = last_search_data.rows[Number(idx)];
+			const row = last_table_rows[Number(idx)];
 			if (row?.item_code) {
 				codes.push(row.item_code);
 			}
 		});
-		return codes;
+		return [...new Set(codes)];
+	}
+
+	function show_replace_result(out) {
+		if (out.failed?.length) {
+			const details = out.failed
+				.map((f) => `${f.item_code}: ${f.reason}`)
+				.join("<br>");
+			frappe.msgprint({
+				title: __("Some items failed"),
+				message: details,
+				indicator: "orange",
+			});
+		}
+		if (out.skipped?.length) {
+			frappe.show_alert({
+				message: __("Skipped {0} item(s)", [out.skipped.length]),
+				indicator: "orange",
+			});
+		}
+		frappe.show_alert({
+			message: __("Updated {0} item(s)", [out.updated_count || 0]),
+			indicator: out.updated_count ? "green" : "orange",
+		});
 	}
 
 	function run_search(show_all) {
@@ -306,10 +331,7 @@ frappe.pages["item-word-replace-tool"].on_page_load = function (wrapper) {
 						callback(res) {
 							if (res.exc || !res.message) return;
 							const out = res.message;
-							frappe.show_alert({
-								message: __("Updated {0} item(s)", [out.updated_count]),
-								indicator: out.updated_count ? "green" : "orange",
-							});
+							show_replace_result(out);
 							if (last_search_data?.show_all) {
 								run_search(true);
 							} else {

@@ -34,6 +34,33 @@ def _apply_replace(value: str, search: str, replace: str) -> str:
 	return re.sub(re.escape(search), replace, value, flags=re.IGNORECASE)
 
 
+def _normalize_replaced_value(value: str) -> str:
+	"""Collapse redundant whitespace left after replace/remove."""
+	text = cstr(value)
+	if not text:
+		return text
+	return " ".join(text.split())
+
+
+def _compute_new_values(
+	current_name: str, current_code: str, search_text: str, replace_text: str
+) -> tuple[str, str]:
+	new_name = current_name
+	new_code = current_code
+
+	if _text_contains(current_name, search_text):
+		new_name = _normalize_replaced_value(
+			_apply_replace(current_name, search_text, replace_text)
+		)
+
+	if _text_contains(current_code, search_text):
+		new_code = _normalize_replaced_value(
+			_apply_replace(current_code, search_text, replace_text)
+		)
+
+	return new_name, new_code
+
+
 def _like_pattern(text: str) -> str:
 	"""Escape LIKE wildcards in user search text."""
 	return (
@@ -200,15 +227,8 @@ def get_replace_preview(search_text: str, replace_text: str, item_codes=None):
 		):
 			continue
 
-		new_name = (
-			_apply_replace(current_name, search_text, replace_text)
-			if _text_contains(current_name, search_text)
-			else current_name
-		)
-		new_code = (
-			_apply_replace(current_code, search_text, replace_text)
-			if _text_contains(current_code, search_text)
-			else current_code
+		new_name, new_code = _compute_new_values(
+			current_name, current_code, search_text, replace_text
 		)
 		if new_name == current_name and new_code == current_code:
 			continue
@@ -262,8 +282,8 @@ def replace_selected_items(search_text: str, replace_text: str, item_codes=None)
 			)
 			failed.append({"item_code": item_code, "reason": str(exc)})
 
-	if not updated and not skipped:
-		frappe.throw(_("No items were updated."))
+	if not updated:
+		_report_no_updates(skipped, failed)
 
 	frappe.msgprint(
 		_("Updated {0} item(s). Skipped {1}, failed {2}.").format(
@@ -292,9 +312,33 @@ def _parse_item_codes(item_codes) -> list[str]:
 	return [str(c).strip() for c in item_codes if c and str(c).strip()]
 
 
+def _report_no_updates(skipped: list[dict], failed: list[dict]) -> None:
+	if failed:
+		lines = [
+			"{0}: {1}".format(f.get("item_code"), f.get("reason")) for f in failed[:15]
+		]
+		if len(failed) > 15:
+			lines.append(_("...and {0} more failure(s)").format(len(failed) - 15))
+
+		message = _("No items were updated.") + "<br><br>" + "<br>".join(
+			frappe.utils.escape_html(line) for line in lines
+		)
+		if skipped:
+			message += "<br><br>" + _("Skipped {0} item(s).").format(len(skipped))
+		frappe.throw(message)
+
+	if skipped:
+		frappe.throw(_("No items were updated. Skipped {0} item(s).").format(len(skipped)))
+
+	frappe.throw(_("No items were updated."))
+
+
 def _replace_item_name_and_code(
 	item_code: str, search_text: str, replace_text: str
 ) -> dict:
+	if not frappe.db.exists("Item", item_code):
+		frappe.throw(_("Item {0} not found").format(item_code))
+
 	item = frappe.get_doc("Item", item_code)
 	frappe.has_permission("Item", doc=item, ptype="write", throw=True)
 
@@ -306,26 +350,27 @@ def _replace_item_name_and_code(
 	):
 		return {"reason": _("Skipped: search text not found in item name or item code")}
 
-	new_name = (
-		_apply_replace(current_name, search_text, replace_text)
-		if _text_contains(current_name, search_text)
-		else current_name
-	)
-	new_code = (
-		_apply_replace(current_code, search_text, replace_text)
-		if _text_contains(current_code, search_text)
-		else current_code
+	new_name, new_code = _compute_new_values(
+		current_name, current_code, search_text, replace_text
 	)
 
 	if new_name == current_name and new_code == current_code:
 		return {"reason": _("Skipped: no change after replace")}
 
 	if new_code != current_code:
-		if frappe.db.exists("Item", new_code):
+		if not new_code:
+			new_code = current_code
+		elif frappe.db.exists("Item", new_code):
 			frappe.throw(_("Item {0} already exists").format(new_code))
-		frappe.rename_doc("Item", current_code, new_code, force=False)
-		item = frappe.get_doc("Item", new_code)
-		item_code = new_code
+		else:
+			renamed_to = frappe.rename_doc(
+				"Item",
+				current_code,
+				new_code,
+				force=False,
+				show_alert=False,
+			)
+			item = frappe.get_doc("Item", renamed_to)
 
 	if new_name != (item.item_name or ""):
 		item.item_name = new_name
